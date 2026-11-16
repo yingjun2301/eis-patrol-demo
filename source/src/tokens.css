@@ -1,0 +1,46 @@
+/* Semantic tokens. Ant Design equivalents: theme.ts. */
+:root {
+  color-scheme: dark;
+  --bg-layout: #141414;
+  --bg-panel: #181818;
+  --bg-card: #202020;
+  --bg-elevated: #242424;
+  --bg-input: #303030;
+  --bg-user: #2b2b2b;
+  --bg-sidebar: #202020;
+  --bg-main: #141414;
+  --text: #f1f1f1;
+  --text-secondary: #b4b4b4;
+  --text-tertiary: #8c8c8c;
+  --border: #303030;
+  --border-strong: #414141;
+  --link: #69b1ff;
+  --success-text: #95de64;
+  --warning-text: #ffd666;
+  --error-text: #ff7875;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --font-small: 12px;
+  --font-body: 14px;
+  --font-title: 16px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-overlay: 16px;
+  --radius-chat: 20px;
+  --radius-composer: 24px;
+  --header-height: 48px;
+  --module-height: 48px;
+  --taskbar-height: 48px;
+  --left-width: 224px;
+  --right-width: 400px;
+  --shadow-overlay:
+    0 0 0 1px #ffffff24,
+    0 8px 24px #0008,
+    0 20px 48px #0006;
+}
