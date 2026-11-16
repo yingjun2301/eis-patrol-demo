@@ -1,4 +1,6 @@
-# EIS 港区巡检 Demo
+# 黄颖君 - AI设计工程师 - 实操题
+
+**EIS 对话与态势地图协同**
 
 面向港区调度人员的桌面交互演示，聚焦“查看设备 → 安排巡检 → 确认执行 → 结果反馈”。
 
@@ -6,7 +8,7 @@
 
 [直接在线体验](https://yingjun2301.github.io/eis-patrol-demo/)，无需安装或解压，建议窗口宽度不小于 1280px。
 
-需要离线保留时，可[下载交付包](https://github.com/yingjun2301/eis-patrol-demo/raw/refs/heads/main/EIS%E5%B7%A1%E6%A3%80Demo.zip)，解压后用桌面浏览器打开 `演示.html`。
+需要离线保留时，可[下载交付包](https://github.com/yingjun2301/eis-patrol-demo/raw/refs/heads/main/%E9%BB%84%E9%A2%96%E5%90%9B-AI%E8%AE%BE%E8%AE%A1%E5%B7%A5%E7%A8%8B%E5%B8%88-%E5%AE%9E%E6%93%8D%E9%A2%98-EIS%E5%B7%A1%E6%A3%80Demo.zip)，解压后用桌面浏览器打开 `演示.html`。
 
 源码位于 `source/`。使用 Node.js 22.12+，依次执行 `cd source`、`npm ci`、`npm run dev`；`npm test` 运行测试，`npm run build` 重新构建。
 
