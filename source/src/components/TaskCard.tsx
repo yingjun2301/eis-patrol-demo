@@ -1,27 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { Alert, Button, DatePicker, Progress, Select } from "antd";
 import {
-  Alert,
-  Button,
-  DatePicker,
-  Popover,
-  Progress,
-  Radio,
-  Select,
-} from "antd";
-import {
-  CalendarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { usePatrol } from "../state/PatrolContext";
-import {
-  phaseLabels,
-  startLabel,
-  type Plan,
-  type StartTime,
-} from "../domain/model";
+import { phaseLabels, startLabel, type Plan } from "../domain/model";
 import { ObjectLink } from "./Objects";
 import ExecutionControls from "./ExecutionControls";
 
@@ -45,22 +31,20 @@ export function PlanReceipt({ plan }: { plan: Plan }) {
   );
 }
 
-/** Both the field shortcut and expanded card edit the same draft time. */
-function StartTimeEditor({
-  onSelected,
-  onPickerOpenChange,
+/** One calendar edits the shared draft; choosing now means start after confirmation. */
+function StartTimeField({
+  open,
+  onOpenChange,
 }: {
-  onSelected?: () => void;
-  onPickerOpenChange: (open: boolean) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const { state, dispatch } = usePatrol();
   const start = state.plan?.start;
   const now = Math.max(Date.now(), state.now);
   const timestamp = start?.kind === "scheduled" ? start.at : null;
-  // Clock ticks must not reset a calendar selection that has not been accepted yet.
+  // Keep uncommitted calendar selections stable across simulation clock ticks.
   const selectedDate = useMemo(
-    // The picker edits wall-clock fields; convert the chosen fields to Beijing
-    // time on commit instead of letting its internal parser handle a TZ object.
     () =>
       timestamp === null
         ? null
@@ -69,93 +53,74 @@ function StartTimeEditor({
           ),
     [timestamp],
   );
-  const choose = (value: StartTime) => {
-    if (value.kind === "scheduled" && value.at <= now) return;
-    onPickerOpenChange(false);
-    dispatch({ type: "UPDATE_START", start: value });
-    onSelected?.();
-  };
   return (
-    <div className="start-time-editor">
-      <Radio.Group
-        aria-label="开始时间方式"
-        value={start?.kind}
-        onChange={(e) => {
-          if (e.target.value === "immediate") choose({ kind: "immediate" });
-          else
-            dispatch({
-              type: "UPDATE_START",
-              start: {
-                kind: "scheduled",
-                at: dayjs(now + 15 * 60000)
-                  .second(0)
-                  .millisecond(0)
-                  .valueOf(),
-              },
-            });
-        }}
-        options={[
-          { label: "确认后立即开始", value: "immediate" },
-          { label: "指定时间", value: "scheduled" },
-        ]}
-      />
-      {start?.kind === "scheduled" && (
-        <>
-          <DatePicker
-            aria-label="巡检开始时间"
-            showTime={{ format: "HH:mm" }}
-            format="YYYY-MM-DD HH:mm"
-            value={selectedDate}
-            onChange={(value) => {
-              if (value)
-                choose({
-                  kind: "scheduled",
-                  at: dayjs
-                    .tz(value.format("YYYY-MM-DD HH:mm"), "Asia/Shanghai")
-                    .valueOf(),
-                });
-            }}
-            onOpenChange={onPickerOpenChange}
-            needConfirm
-            previewValue={false}
-            allowClear={false}
-            showNow={false}
-            disabledDate={(d) =>
-              d.format("YYYY-MM-DD") <
-              dayjs(now).tz("Asia/Shanghai").format("YYYY-MM-DD")
-            }
-            disabledTime={(date) => {
-              const current = dayjs(now).tz("Asia/Shanghai");
-              if (date?.format("YYYY-MM-DD") !== current.format("YYYY-MM-DD"))
-                return {};
-              return {
-                disabledHours: () =>
-                  Array.from({ length: current.hour() }, (_, i) => i),
-                disabledMinutes: (hour) =>
-                  hour === current.hour()
-                    ? Array.from({ length: current.minute() + 1 }, (_, i) => i)
-                    : [],
-              };
-            }}
-          />
-          <small className={start.at <= now ? "warning-text" : "muted"}>
-            {start.at <= now ? "请选择晚于当前时间的时间" : "北京时间（UTC+8）"}
-          </small>
-        </>
-      )}
-    </div>
+    <DatePicker
+      className="plan-time-picker"
+      aria-label="修改开始时间"
+      placeholder="确认后立即开始"
+      variant="borderless"
+      size="small"
+      showTime={{ format: "HH:mm" }}
+      format="YYYY/MM/DD HH:mm"
+      value={selectedDate}
+      open={open}
+      onOpenChange={onOpenChange}
+      onChange={(value) => {
+        if (!value) return;
+        const at = dayjs
+          .tz(value.format("YYYY-MM-DD HH:mm"), "Asia/Shanghai")
+          .valueOf();
+        const currentMinute = dayjs(now)
+          .tz("Asia/Shanghai")
+          .format("YYYY-MM-DD HH:mm");
+        // Ant Design's native “此刻” shortcut uses the browser's current clock.
+        const immediate =
+          value.isSame(dayjs(), "minute") ||
+          value.format("YYYY-MM-DD HH:mm") === currentMinute;
+        if (!immediate && at <= now) return;
+        dispatch({
+          type: "UPDATE_START",
+          start: immediate ? { kind: "immediate" } : { kind: "scheduled", at },
+        });
+        onOpenChange(false);
+      }}
+      needConfirm
+      previewValue={false}
+      inputReadOnly
+      allowClear={false}
+      showNow
+      disabledDate={(date) =>
+        date.format("YYYY-MM-DD") <
+        dayjs(now).tz("Asia/Shanghai").format("YYYY-MM-DD")
+      }
+      disabledTime={(date) => {
+        const current = dayjs(now).tz("Asia/Shanghai");
+        if (date?.format("YYYY-MM-DD") !== current.format("YYYY-MM-DD"))
+          return {};
+        return {
+          disabledHours: () =>
+            Array.from({ length: current.hour() }, (_, i) => i),
+          disabledMinutes: (hour) =>
+            hour === current.hour()
+              ? Array.from({ length: current.minute() }, (_, i) => i)
+              : [],
+        };
+      }}
+    />
   );
 }
 
-export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
+export default function TaskCard({
+  onAdvance,
+  onModify,
+}: {
+  onAdvance: () => void;
+  onModify: () => void;
+}) {
   const { state, dispatch } = usePatrol();
-  const [editing, setEditing] = useState(false);
-  const [timeOpen, setTimeOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const editable = ["preview", "clarify"].includes(state.phase);
   useEffect(() => {
-    setEditing(false);
-    setTimeOpen(false);
     setPickerOpen(false);
   }, [state.session, editable]);
   const plan = state.plan;
@@ -174,7 +139,6 @@ export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
       className={"task-card " + (failed ? "task-failed" : "")}
       aria-label="当前巡检任务"
       data-testid="task-card"
-      data-editing={editing}
     >
       <div className="task-card-heading">
         <strong>A 区巡检</strong>
@@ -223,57 +187,18 @@ export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
                 <dt>巡检区域</dt>
                 <dd>
                   <ObjectLink id="zone-a" />
-                  <span className="tiny muted">集装箱作业区</span>
                 </dd>
               </div>
-              <div className={editing ? "plan-setting-expanded" : ""}>
+              <div>
                 <dt>开始时间</dt>
                 <dd>
-                  {editing ? (
-                    <StartTimeEditor onPickerOpenChange={setPickerOpen} />
-                  ) : (
-                    <>
-                      <Popover
-                        title="开始时间"
-                        trigger="click"
-                        arrow={false}
-                        placement="bottomRight"
-                        open={timeOpen}
-                        onOpenChange={(open) => {
-                          setTimeOpen(open);
-                          if (!open) setPickerOpen(false);
-                        }}
-                        destroyOnHidden
-                        content={
-                          <StartTimeEditor
-                            onPickerOpenChange={setPickerOpen}
-                            onSelected={() => {
-                              setTimeOpen(false);
-                              setPickerOpen(false);
-                            }}
-                          />
-                        }
-                      >
-                        <Button
-                          type="text"
-                          size="small"
-                          className="plan-time-trigger"
-                          aria-label="修改开始时间"
-                        >
-                          <span className={timeInvalid ? "warning-text" : ""}>
-                            {startLabel(plan.start)}
-                          </span>
-                          <CalendarOutlined />
-                        </Button>
-                      </Popover>
-                      {plan.startSuggested && (
-                        <span className="tiny muted">建议</span>
-                      )}
-                    </>
-                  )}
+                  <StartTimeField
+                    open={pickerOpen}
+                    onOpenChange={setPickerOpen}
+                  />
                 </dd>
               </div>
-              <div className={editing ? "plan-setting-expanded" : ""}>
+              <div>
                 <dt>
                   <label htmlFor="route-order">巡检顺序</label>
                 </dt>
@@ -283,7 +208,7 @@ export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
                     aria-label="巡检顺序"
                     className="plan-order-select"
                     size="small"
-                    variant={editing ? "outlined" : "borderless"}
+                    variant="borderless"
                     value={plan.order}
                     onChange={(order) =>
                       dispatch({ type: "UPDATE_ORDER", order })
@@ -293,7 +218,6 @@ export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
                       { label: "逆向巡检", value: "reverse" },
                     ]}
                   />
-                  <span className="tiny muted">6 个路线点</span>
                 </dd>
               </div>
             </dl>
@@ -306,13 +230,9 @@ export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
               <span>{startLabel(plan.start)}</span>
             </div>
           )}
-          {editable && (
-            <p className="preview-note">
-              {plan.startSuggested
-                ? "建议确认后立即开始，是否按此安排？"
-                : !plan.start
-                  ? "请选择开始时间，再确认计划。"
-                  : "核对时间与地图路线后，确认执行。"}
+          {editable && timeInvalid && (
+            <p className="preview-note warning-text">
+              请选择晚于当前时间的时间
             </p>
           )}
           {failed && (
@@ -397,15 +317,7 @@ export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
             </Button>
           ) : (
             <>
-              <Button
-                onClick={() => {
-                  setTimeOpen(false);
-                  setPickerOpen(false);
-                  setEditing(!editing);
-                }}
-              >
-                {editing ? "收起设置" : "修改计划"}
-              </Button>
+              <Button onClick={onModify}>修改计划</Button>
               <Button
                 type="primary"
                 disabled={timeInvalid || pickerOpen}

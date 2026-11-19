@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Input, Select, Tag, Tooltip } from "antd";
+import type { TextAreaRef } from "antd/es/input/TextArea";
 import {
   ArrowUpOutlined,
   ArrowRightOutlined,
@@ -7,9 +8,16 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import { usePatrol } from "../state/PatrolContext";
-import { labelOf, type ObjectId } from "../domain/model";
+import {
+  labelOf,
+  phaseLabels,
+  startLabel,
+  type Message,
+  type ObjectId,
+} from "../domain/model";
 import { ObjectIcon, ObjectLink } from "./Objects";
 import TaskCard, { PlanReceipt } from "./TaskCard";
+import MessageFeedback from "./MessageFeedback";
 export default function Conversation({
   hidden,
   onCollapse,
@@ -23,6 +31,7 @@ export default function Conversation({
   const [preset, setPreset] = useState<string>();
   const historyRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<TextAreaRef>(null);
   const followTail = useRef(true);
   useEffect(() => {
     const history = historyRef.current;
@@ -54,6 +63,53 @@ export default function Conversation({
     advance();
     dispatch({ type: "SEND", text: input });
     setInput("");
+  }
+  function modifyPlan() {
+    advance();
+    dispatch({ type: "REQUEST_PLAN_CHANGE" });
+    requestAnimationFrame(() =>
+      inputRef.current?.focus({ preventScroll: true }),
+    );
+  }
+  function feedbackReady(m: Message) {
+    if (m.role !== "agent") return false;
+    if (!m.taskId && m.taskUpdates === undefined) return true;
+    return (
+      m.taskUpdates?.at(-1)?.kind === "result" &&
+      (m.id !== state.activeTaskMessageId ||
+        ["completed", "stopped"].includes(state.phase))
+    );
+  }
+  function replyText(m: Message) {
+    const active = m.id === state.activeTaskMessageId;
+    const plan = active ? state.plan : m.planReceipt;
+    const summary = plan
+      ? [
+          "A 区巡检",
+          `执行设备：${labelOf(plan.deviceId)}`,
+          `巡检区域：${labelOf(plan.regionId)}`,
+          `开始时间：${startLabel(plan.start)}`,
+          `巡检顺序：${plan.order === "forward" ? "顺向巡检" : "逆向巡检"}`,
+          ...(active
+            ? [
+                phaseLabels[state.phase],
+                ...(["completed", "stopped"].includes(state.phase)
+                  ? [`进度：${Math.round(state.progress)}%`]
+                  : []),
+              ]
+            : []),
+        ].join("\n")
+      : "";
+    return [
+      m.text,
+      m.kind !== "filter" && m.taskUpdates === undefined
+        ? m.refs?.map(labelOf).join(" · ")
+        : "",
+      summary,
+      ...(m.taskUpdates?.map((update) => update.text) ?? []),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
   const contextMenuItem = (id: ObjectId) => ({
     key: id,
@@ -211,7 +267,7 @@ export default function Conversation({
                     </div>
                   )}
                 {m.id === state.activeTaskMessageId ? (
-                  <TaskCard onAdvance={advance} />
+                  <TaskCard onAdvance={advance} onModify={modifyPlan} />
                 ) : m.planReceipt ? (
                   <PlanReceipt plan={m.planReceipt} />
                 ) : null}
@@ -235,6 +291,13 @@ export default function Conversation({
                       </p>
                     ))}
                   </div>
+                )}
+                {feedbackReady(m) && (
+                  <MessageFeedback
+                    key={`${state.session}-${m.id}`}
+                    text={replyText(m)}
+                    at={m.taskUpdates?.at(-1)?.at ?? m.at}
+                  />
                 )}
               </article>
             ))}
@@ -261,6 +324,7 @@ export default function Conversation({
         )}
         <div className="input-shell">
           <Input.TextArea
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={

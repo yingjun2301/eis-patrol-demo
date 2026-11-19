@@ -100,6 +100,63 @@ describe("筛选与上下文", () => {
     expect(n.messages.at(-1)?.text).toContain("时效未知");
   });
 });
+describe("从计划卡衔接对话修改", () => {
+  it("入口只追加简短问答，保留原草稿和卡片位置，重复点击不刷屏", () => {
+    const draft = filtered();
+    const asked = reducer(draft, { type: "REQUEST_PLAN_CHANGE" });
+    expect(asked.plan).toBe(draft.plan);
+    expect(asked.activeTaskMessageId).toBe(draft.activeTaskMessageId);
+    expect(asked.phase).toBe(draft.phase);
+    expect(asked.messages.slice(0, draft.messages.length)).toEqual(
+      draft.messages,
+    );
+    expect(asked.messages.slice(-2)).toMatchObject([
+      { role: "user", text: "修改巡检计划" },
+      { role: "agent", text: "想调整开始时间，还是巡检顺序？" },
+    ]);
+    expect(
+      asked.messages.slice(-2).every((m) => !m.taskId && !m.planReceipt),
+    ).toBe(true);
+    expect(asked.confirmedRevision).toBeNull();
+    expect(asked.dispatchCount).toBe(0);
+    expect(reducer(asked, { type: "REQUEST_PLAN_CHANGE" })).toBe(asked);
+    const typed = reducer(draft, { type: "SEND", text: "修改计划" });
+    expect(typed.plan).toBe(draft.plan);
+    expect(typed.activeTaskMessageId).toBe(draft.activeTaskMessageId);
+    expect(typed.messages.at(-1)?.text).toBe(asked.messages.at(-1)?.text);
+  });
+  it("回答沿用已有时间与顺序解析，仍更新原卡并等待最终确认", () => {
+    const draft = filtered();
+    const asked = reducer(draft, { type: "REQUEST_PLAN_CHANGE" });
+    const reverse = reducer(asked, { type: "SEND", text: "改为逆向巡检" });
+    const timed = reducer(reverse, { type: "SEND", text: "明天 09:30 开始" });
+    expect(timed.plan).toMatchObject({
+      id: draft.plan!.id,
+      order: "reverse",
+      start: { kind: "scheduled", at: Date.parse("2026-11-16T09:30:00+08:00") },
+    });
+    expect(timed.activeTaskMessageId).toBe(draft.activeTaskMessageId);
+    expect(
+      timed.messages.find((m) => m.id === draft.activeTaskMessageId),
+    ).toEqual(taskMessage(draft));
+    expect(timed.confirmedRevision).toBeNull();
+    expect(timed.dispatchCount).toBe(0);
+    expect(timed.phase).toBe("preview");
+    expect(prepared(confirm(timed)).phase).toBe("scheduled");
+  });
+  it("没有计划或已进入执行流程时不再接受卡片修改入口", () => {
+    const confirmed = confirm();
+    const dispatched = prepared(confirmed);
+    const running = reducer(dispatched, {
+      type: "ACK",
+      session: dispatched.session,
+      revision: dispatched.plan!.revision,
+    });
+    for (const state of [initialState(NOW), confirmed, dispatched, running]) {
+      expect(reducer(state, { type: "REQUEST_PLAN_CHANGE" })).toBe(state);
+    }
+  });
+});
 describe("澄清、版本和下发边界", () => {
   it("筛选后直接预览建议时间和路线，等待不等于接受或下发", () => {
     const draft = filtered();

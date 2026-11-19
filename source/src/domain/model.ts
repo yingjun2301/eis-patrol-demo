@@ -168,6 +168,7 @@ export type Action =
   | { type: "FILTER"; criteriaConfirmed: true }
   | { type: "INSPECT_DEVICES" }
   | { type: "START_PLANNING" }
+  | { type: "REQUEST_PLAN_CHANGE" }
   | { type: "FOCUS"; id: ObjectId | null }
   | { type: "ADD_CONTEXT"; id: ObjectId }
   | { type: "REMOVE_CONTEXT"; id: ObjectId }
@@ -260,6 +261,16 @@ function startPlanning(s: State, text = "创建巡检任务"): State {
   });
 }
 const editable = (s: State) => s.phase === "clarify" || s.phase === "preview";
+function requestPlanChange(s: State, text = "修改巡检计划"): State {
+  if (!s.plan || !editable(s)) return s;
+  const question = "想调整开始时间，还是巡检顺序？";
+  if (
+    s.messages.at(-1)?.role === "agent" &&
+    s.messages.at(-1)?.text === question
+  )
+    return s;
+  return add(add(s, "user", text), "agent", question);
+}
 function begin(s: State, text = originalRequest): State {
   if (s.plan)
     return add(s, "agent", "当前已有巡检计划，请在任务卡中修改或继续。");
@@ -390,6 +401,8 @@ export function reducer(s: State, a: Action): State {
       return { ...s, faultNext: a.enabled };
     case "START_PLANNING":
       return startPlanning(s);
+    case "REQUEST_PLAN_CHANGE":
+      return requestPlanChange(s);
     case "INSPECT_DEVICES": {
       if (s.plan) return s;
       const n = add(
@@ -430,6 +443,8 @@ export function reducer(s: State, a: Action): State {
     case "SEND": {
       const text = a.text.trim();
       if (!text) return s;
+      if (s.plan && editable(s) && /^修改(?:巡检)?计划[。！!]?$/u.test(text))
+        return requestPlanChange(s, text);
       if (
         !s.plan &&
         (/A\s*区/i.test(text) ||

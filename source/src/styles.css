@@ -815,49 +815,38 @@ small,
   align-items: center;
   gap: 4px 8px;
 }
-.plan-time-trigger.ant-btn {
-  height: auto;
-  min-height: 28px;
-  padding: 2px 4px;
-  margin-left: -4px;
-  white-space: normal;
-  text-align: left;
-  font-size: var(--font-body);
+.plan-time-picker.ant-picker {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 2px 0;
 }
-.plan-time-trigger .anticon {
+.plan-time-picker .ant-picker-input > input {
+  font-size: 14px;
+  cursor: pointer;
+}
+.plan-time-picker .ant-picker-input > input::placeholder {
+  color: var(--text-primary);
+  opacity: 1;
+}
+.plan-time-picker .ant-picker-suffix {
+  margin-inline-end: 4px;
   color: var(--text-secondary);
 }
-.plan-order-select {
-  width: 126px;
-  margin-left: -4px;
-}
 .plan-order-select.ant-select {
-  font-size: var(--font-body);
+  width: 126px;
+  height: 28px;
+  border-width: 0;
+  padding-inline: 0;
+  font-size: 14px;
 }
-.plan-setting-expanded {
-  grid-template-columns: 1fr !important;
-  gap: 6px !important;
+.plan-order-select.ant-select .ant-select-content {
+  padding-inline-start: 0;
 }
-.plan-setting-expanded .plan-order-select {
-  width: 100%;
-  margin-left: 0;
+.plan-details > div {
+  align-items: center;
 }
-.start-time-editor {
-  display: grid;
-  gap: 12px;
-  width: 268px;
-  max-width: 100%;
-}
-.start-time-editor .ant-radio-group {
-  display: grid;
-  gap: 8px;
-}
-.start-time-editor .ant-picker {
-  width: 100%;
-}
-.plan-setting-expanded .start-time-editor {
-  width: 100%;
-}
+
 .task-summary {
   font-size: var(--font-small);
   line-height: 20px;
