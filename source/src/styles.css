@@ -737,6 +737,24 @@ small,
   font-size: var(--font-body);
   line-height: 22px;
 }
+.task-updates {
+  display: grid;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+.task-updates:not(:empty) {
+  margin-top: 16px;
+}
+.task-update {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-update-result,
+.task-update-question {
+  color: var(--text);
+  font-weight: 500;
+}
 .task-card {
   margin: 16px 0 0;
   scroll-margin-top: 16px;

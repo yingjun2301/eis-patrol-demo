@@ -88,6 +88,12 @@ export const startLabel = (s: StartTime | null) =>
     : s.kind === "immediate"
       ? "确认后立即开始"
       : fmtDate(s.at) + "（北京时间）";
+export type TaskUpdate = {
+  id: number;
+  text: string;
+  at: number;
+  kind: "progress" | "failure" | "question" | "result";
+};
 export type Message = {
   id: number;
   role: "user" | "agent";
@@ -95,6 +101,8 @@ export type Message = {
   kind?: "filter" | "event" | "task" | "failure" | "setup" | "inventory";
   simulatedDurationMs?: number;
   planReceipt?: Plan;
+  taskId?: string;
+  taskUpdates?: TaskUpdate[];
   refs?: ObjectId[];
   at: number;
 };
@@ -196,13 +204,38 @@ const add = (
     },
   ],
 });
-// Keep the card at its original place in the conversation; status replies append
-// after it. Confirmation starts an execution card and preserves the plan receipt.
+// A confirmed task owns one assistant reply. Its card and ordered progress stay
+// together, while user interruptions and their answers remain separate messages.
 const taskReply = (
   s: State,
   text: string,
   extra: Partial<Message> = {},
+  updateKind: TaskUpdate["kind"] = extra.kind === "failure"
+    ? "failure"
+    : "progress",
 ): State => {
+  const active = s.messages.find(
+    (m) =>
+      m.id === s.activeTaskMessageId &&
+      m.taskId === s.plan?.id &&
+      m.taskUpdates !== undefined,
+  );
+  if (active) {
+    const update: TaskUpdate = {
+      id: (active.taskUpdates!.at(-1)?.id ?? 0) + 1,
+      text,
+      at: s.now,
+      kind: updateKind,
+    };
+    return {
+      ...s,
+      messages: s.messages.map((m) =>
+        m.id === active.id
+          ? { ...m, taskUpdates: [...m.taskUpdates!, update] }
+          : m,
+      ),
+    };
+  }
   const next = add(s, "agent", text, extra);
   return {
     ...next,
@@ -446,15 +479,21 @@ export function reducer(s: State, a: Action): State {
         !eligibility(s.devices.find((d) => d.id === s.plan!.deviceId)!).eligible
       )
         return { ...s, error: "设备不满足条件，请重新核对。" };
+      const continuingTask = s.messages.some(
+        (m) =>
+          m.id === s.activeTaskMessageId &&
+          m.taskId === s.plan!.id &&
+          m.taskUpdates !== undefined,
+      );
       const n = add(
         {
           ...s,
           now,
           confirmedRevision: a.revision,
           error: null,
-          activeTaskMessageId: null,
+          activeTaskMessageId: continuingTask ? s.activeTaskMessageId : null,
           messages: s.messages.map((message) =>
-            message.id === s.activeTaskMessageId
+            !continuingTask && message.id === s.activeTaskMessageId
               ? { ...message, planReceipt: { ...s.plan! } }
               : message,
           ),
@@ -463,17 +502,23 @@ export function reducer(s: State, a: Action): State {
         "确认计划：设备 A · A 区 · " + startLabel(s.plan.start) + "。",
         { refs: ["A", "zone-a"] },
       );
+      const taskMessage: Partial<Message> = {
+        kind: "task",
+        taskId: n.plan!.id,
+        taskUpdates: [],
+      };
+      const confirmation = continuingTask
+        ? "更新后的计划已确认，正在准备巡检路线。"
+        : "已收到你的确认。";
       if (n.preparedRevision === a.revision)
         return n.plan!.start!.kind === "scheduled"
           ? taskReply(
               { ...n, phase: "scheduled" },
               "计划已确认，等待预约时间。",
-              { kind: "event" },
+              taskMessage,
             )
-          : taskReply(startDispatch(n), "已收到你的确认。", { kind: "task" });
-      return taskReply({ ...n, phase: "preparing" }, "已收到你的确认。", {
-        kind: "task",
-      });
+          : taskReply(startDispatch(n), confirmation, taskMessage);
+      return taskReply({ ...n, phase: "preparing" }, confirmation, taskMessage);
     }
     case "PREPARED": {
       if (
@@ -491,7 +536,7 @@ export function reducer(s: State, a: Action): State {
             error: null,
           },
           "路线准备未成功。",
-          { kind: "failure", refs: ["A"] },
+          { kind: "failure" },
         );
       const n = { ...s, preparedRevision: a.revision, error: null };
       if (s.confirmedRevision !== a.revision)
@@ -499,6 +544,7 @@ export function reducer(s: State, a: Action): State {
           { ...n, phase: "preview", preparedRevision: null },
           "当前计划尚未确认，请核对后确认。",
           { kind: "event" },
+          "question",
         );
       if (s.phase === "retrying") {
         if (s.plan.start?.kind === "scheduled" && s.plan.start.at <= s.now)
@@ -512,6 +558,7 @@ export function reducer(s: State, a: Action): State {
             },
             "路线已恢复，但原预约时间已过。请重新选择开始时间并确认。",
             { kind: "event" },
+            "question",
           );
         return s.plan.start?.kind === "scheduled"
           ? taskReply(
@@ -537,15 +584,14 @@ export function reducer(s: State, a: Action): State {
       return s.phase === "preparationFailed" &&
         s.plan &&
         s.confirmedRevision === s.plan.revision
-        ? add(
+        ? taskReply(
             {
               ...s,
               phase: "retrying",
               now: Math.max(s.now, a.now),
               error: null,
             },
-            "user",
-            "重试准备巡检路线。",
+            "正在重新准备巡检路线。",
           )
         : s;
     case "TICK": {
@@ -566,8 +612,8 @@ export function reducer(s: State, a: Action): State {
         s.phase === "dispatching"
         ? taskReply(
             { ...s, phase: "running", progress: 0 },
-            "设备 A 已接收任务，开始巡检 A 区。地图显示模拟位置与已走轨迹。",
-            { kind: "event", refs: ["A", "zone-a"] },
+            "设备 A 已接收任务，开始巡检 A 区。",
+            { kind: "event" },
           )
         : s;
     case "PROGRESS":
@@ -576,7 +622,8 @@ export function reducer(s: State, a: Action): State {
         ? taskReply(
             { ...s, phase: "completed", progress: 100 },
             "A 区巡检完成，未发现异常。设备 A 已恢复空闲。",
-            { kind: "event", refs: ["A", "zone-a"] },
+            { kind: "event" },
+            "result",
           )
         : { ...s, progress: Math.max(s.progress, a.progress) };
     case "PAUSE":
@@ -584,7 +631,7 @@ export function reducer(s: State, a: Action): State {
         ? taskReply(
             { ...s, phase: "paused" },
             "巡检已暂停，设备位置与已走轨迹保持在当前进度。可继续巡检或停止任务。",
-            { kind: "event", refs: ["A", "zone-a"] },
+            { kind: "event" },
           )
         : s;
     case "RESUME":
@@ -592,7 +639,7 @@ export function reducer(s: State, a: Action): State {
         ? taskReply(
             { ...s, phase: "running" },
             "巡检已继续，将从暂停位置完成剩余路线。",
-            { kind: "event", refs: ["A", "zone-a"] },
+            { kind: "event" },
           )
         : s;
     case "STOP":
@@ -600,7 +647,8 @@ export function reducer(s: State, a: Action): State {
         ? taskReply(
             { ...s, phase: "stopped" },
             "巡检已停止，未完成的路线不再执行。已走轨迹保留，设备 A 恢复空闲。",
-            { kind: "event", refs: ["A", "zone-a"] },
+            { kind: "event" },
+            "result",
           )
         : s;
     default:

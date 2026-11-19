@@ -22,6 +22,7 @@ export default function Conversation({
   const [region, setRegion] = useState<string>();
   const [preset, setPreset] = useState<string>();
   const historyRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const followTail = useRef(true);
   useEffect(() => {
     const history = historyRef.current;
@@ -32,12 +33,13 @@ export default function Conversation({
     };
     const observer = new ResizeObserver(scroll);
     observer.observe(history);
+    if (messagesRef.current) observer.observe(messagesRef.current);
     const frame = requestAnimationFrame(scroll);
     return () => {
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [hidden, state.messages.length]);
+  }, [hidden, state.messages]);
   useEffect(() => {
     setInput("");
     setRegion(undefined);
@@ -118,92 +120,125 @@ export default function Conversation({
             </button>
           </div>
         ) : (
-          state.messages.map((m) => (
-            <article
-              key={m.id}
-              tabIndex={-1}
-              data-message-id={m.id}
-              className={"message message-" + m.role}
-            >
-              {m.role === "agent" && (
-                <div className="message-label">
-                  用时 {((m.simulatedDurationMs ?? 1200) / 1000).toFixed(1)} 秒
-                  <span className="duration-note">（模拟）</span>
-                </div>
-              )}
-              <div
-                className={
-                  "message-text" +
-                  (m.kind === "filter" ? " filter-summary" : "")
-                }
+          <div className="conversation-messages" ref={messagesRef}>
+            {state.messages.map((m) => (
+              <article
+                key={m.id}
+                tabIndex={-1}
+                data-message-id={m.id}
+                data-task-id={m.taskId}
+                aria-label={m.taskId ? "巡检任务回复" : undefined}
+                className={"message message-" + m.role}
               >
-                {m.text}
-              </div>
-              {m.kind === "setup" &&
-                (!state.plan ? (
-                  <div className="setup-region">
-                    <label htmlFor="patrol-region">巡检区域</label>
-                    <Select
-                      id="patrol-region"
-                      aria-label="巡检区域"
-                      value={region}
-                      placeholder="选择区域"
-                      onChange={setRegion}
-                      options={[
-                        { value: "zone-a", label: "A 区 · 集装箱作业区" },
-                      ]}
-                    />
-                    <label htmlFor="patrol-preset" className="preset-label">
-                      设备筛选条件 <span>可选</span>
-                    </label>
-                    <Select
-                      id="patrol-preset"
-                      aria-label="设备筛选条件"
-                      allowClear
-                      value={preset}
-                      placeholder="不使用预设条件"
-                      onChange={setPreset}
-                      options={[
-                        { value: "online-over-50", label: "在线且电量 > 50%" },
-                      ]}
-                    />
-                    <Button
-                      type="primary"
-                      disabled={!region}
-                      onClick={() => {
-                        advance();
-                        if (preset) {
-                          dispatch({ type: "FILTER", criteriaConfirmed: true });
-                        } else {
-                          dispatch({ type: "INSPECT_DEVICES" });
-                          setInput((current) =>
-                            current.trim() ? current : "在线且电量超过 50%",
-                          );
-                        }
-                      }}
-                    >
-                      {preset ? "检查可用设备" : "查看设备状态"}
-                    </Button>
+                {m.role === "agent" && (
+                  <div className="message-label">
+                    用时 {((m.simulatedDurationMs ?? 1200) / 1000).toFixed(1)}{" "}
+                    秒<span className="duration-note">（模拟）</span>
                   </div>
-                ) : (
-                  <div className="message-objects">
-                    <ObjectLink id="zone-a" />
-                  </div>
-                ))}
-              {m.kind !== "filter" && !!m.refs?.length && (
-                <div className="message-objects">
-                  {m.refs.map((id) => (
-                    <ObjectLink key={id} id={id} />
-                  ))}
+                )}
+                <div
+                  className={
+                    "message-text" +
+                    (m.kind === "filter" ? " filter-summary" : "")
+                  }
+                >
+                  {m.text}
                 </div>
-              )}
-              {m.id === state.activeTaskMessageId ? (
-                <TaskCard onAdvance={advance} />
-              ) : m.planReceipt ? (
-                <PlanReceipt plan={m.planReceipt} />
-              ) : null}
-            </article>
-          ))
+                {m.kind === "setup" &&
+                  (!state.plan ? (
+                    <div className="setup-region">
+                      <label htmlFor="patrol-region">巡检区域</label>
+                      <Select
+                        id="patrol-region"
+                        aria-label="巡检区域"
+                        value={region}
+                        placeholder="选择区域"
+                        onChange={setRegion}
+                        options={[
+                          { value: "zone-a", label: "A 区 · 集装箱作业区" },
+                        ]}
+                      />
+                      <label htmlFor="patrol-preset" className="preset-label">
+                        设备筛选条件 <span>可选</span>
+                      </label>
+                      <Select
+                        id="patrol-preset"
+                        aria-label="设备筛选条件"
+                        allowClear
+                        value={preset}
+                        placeholder="不使用预设条件"
+                        onChange={setPreset}
+                        options={[
+                          {
+                            value: "online-over-50",
+                            label: "在线且电量 > 50%",
+                          },
+                        ]}
+                      />
+                      <Button
+                        type="primary"
+                        disabled={!region}
+                        onClick={() => {
+                          advance();
+                          if (preset) {
+                            dispatch({
+                              type: "FILTER",
+                              criteriaConfirmed: true,
+                            });
+                          } else {
+                            dispatch({ type: "INSPECT_DEVICES" });
+                            setInput((current) =>
+                              current.trim() ? current : "在线且电量超过 50%",
+                            );
+                          }
+                        }}
+                      >
+                        {preset ? "检查可用设备" : "查看设备状态"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="message-objects">
+                      <ObjectLink id="zone-a" />
+                    </div>
+                  ))}
+                {m.kind !== "filter" &&
+                  m.taskUpdates === undefined &&
+                  !!m.refs?.length && (
+                    <div className="message-objects">
+                      {m.refs.map((id) => (
+                        <ObjectLink key={id} id={id} />
+                      ))}
+                    </div>
+                  )}
+                {m.id === state.activeTaskMessageId ? (
+                  <TaskCard onAdvance={advance} />
+                ) : m.planReceipt ? (
+                  <PlanReceipt plan={m.planReceipt} />
+                ) : null}
+                {m.taskUpdates !== undefined && (
+                  <div
+                    className="task-updates"
+                    role="log"
+                    aria-label="本次巡检进展"
+                    aria-live="polite"
+                    aria-relevant="additions"
+                    aria-atomic="false"
+                  >
+                    {m.taskUpdates.map((update) => (
+                      <p
+                        key={update.id}
+                        className={"task-update task-update-" + update.kind}
+                        data-update-id={update.id}
+                        data-update-kind={update.kind}
+                      >
+                        {update.text}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
         )}
       </div>
       <div className="composer">
@@ -256,7 +291,9 @@ export default function Conversation({
                     type: "group",
                     key: "devices",
                     label: "设备",
-                    children: state.devices.map(({ id }) => contextMenuItem(id)),
+                    children: state.devices.map(({ id }) =>
+                      contextMenuItem(id),
+                    ),
                   },
                   {
                     type: "group",

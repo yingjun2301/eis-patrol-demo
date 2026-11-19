@@ -39,11 +39,25 @@ function prepared(s: State, ok = true) {
     ok,
   });
 }
+function taskMessage(s: State) {
+  return s.messages.find((m) => m.id === s.activeTaskMessageId)!;
+}
+function taskUpdates(s: State) {
+  return taskMessage(s).taskUpdates ?? [];
+}
 function expectTaskCardRetained(before: State, after: State) {
   expect(before.activeTaskMessageId).not.toBeNull();
   expect(after.activeTaskMessageId).toBe(before.activeTaskMessageId);
-  expect(after.messages.slice(0, before.messages.length)).toEqual(
-    before.messages,
+  for (const message of before.messages) {
+    if (message.id !== before.activeTaskMessageId) {
+      expect(after.messages.find((m) => m.id === message.id)).toEqual(message);
+    }
+  }
+  const { taskUpdates: beforeUpdates, ...beforeReply } = taskMessage(before);
+  const { taskUpdates: afterUpdates, ...afterReply } = taskMessage(after);
+  expect(afterReply).toEqual(beforeReply);
+  expect(afterUpdates?.slice(0, beforeUpdates?.length ?? 0)).toEqual(
+    beforeUpdates,
   );
   expect(
     after.messages.findIndex((m) => m.id === after.activeTaskMessageId),
@@ -189,11 +203,15 @@ describe("异常恢复与异步事件", () => {
     expectTaskCardRetained(failed, retrying);
     const ready = prepared(retrying);
     expectTaskCardRetained(retrying, ready);
-    expect(ready.messages.slice(confirmed.messages.length)).toEqual([
-      expect.objectContaining({ role: "agent", kind: "failure" }),
-      expect.objectContaining({ role: "user", text: "重试准备巡检路线。" }),
+    expect(ready.messages).toHaveLength(confirmed.messages.length);
+    expect(taskUpdates(ready)).toEqual([
+      expect.objectContaining({ kind: "failure", text: "路线准备未成功。" }),
       expect.objectContaining({
-        role: "agent",
+        kind: "progress",
+        text: "正在重新准备巡检路线。",
+      }),
+      expect.objectContaining({
+        kind: "progress",
         text: expect.stringContaining("继续下发已确认的计划"),
       }),
     ]);
@@ -247,8 +265,9 @@ describe("异常恢复与异步事件", () => {
     expect(r.phase).toBe("running");
     expect(n.phase).toBe("completed");
     expect(n.progress).toBe(100);
-    expect(n.messages.at(-1)?.text).toContain("未发现异常");
-    expect(n.messages.at(-1)?.text).toContain("已恢复空闲");
+    expect(taskUpdates(n).at(-1)?.kind).toBe("result");
+    expect(taskUpdates(n).at(-1)?.text).toContain("未发现异常");
+    expect(taskUpdates(n).at(-1)?.text).toContain("已恢复空闲");
   });
 });
 describe("空间数据", () => {
@@ -297,13 +316,19 @@ describe("浏览器发现的问题回归", () => {
   });
 });
 
-describe("对话只保留执行关键节点", () => {
-  it("确认产生对话内状态卡，下发和进度不重复播报", () => {
+describe("同一次任务持续更新一条助手回复", () => {
+  it("确认建立唯一任务回复，回执归入进展，下发和数值进度不刷消息", () => {
     const plan = preview();
     const preparing = confirm(plan);
     expect(preparing.messages.length).toBe(plan.messages.length + 2);
     expect(preparing.messages.at(-2)?.role).toBe("user");
     expect(preparing.activeTaskMessageId).toBe(preparing.messages.at(-1)?.id);
+    expect(taskMessage(preparing)).toMatchObject({
+      role: "agent",
+      kind: "task",
+      taskId: preparing.plan!.id,
+      taskUpdates: [],
+    });
     const dispatching = prepared(preparing);
     expect(dispatching.phase).toBe("dispatching");
     expect(dispatching.messages).toEqual(preparing.messages);
@@ -312,7 +337,8 @@ describe("对话只保留执行关键节点", () => {
       session: dispatching.session,
       revision: dispatching.plan!.revision,
     });
-    expect(running.messages.at(-1)?.text).toContain("已接收任务");
+    expect(running.messages).toHaveLength(preparing.messages.length);
+    expect(taskUpdates(running).at(-1)?.text).toContain("已接收任务");
     expectTaskCardRetained(preparing, running);
     const progress = reducer(running, {
       type: "PROGRESS",
@@ -322,7 +348,7 @@ describe("对话只保留执行关键节点", () => {
     expect(progress.messages).toEqual(running.messages);
     expectTaskCardRetained(running, progress);
   });
-  it("回执、查询、暂停、继续和完成按序追加在原执行卡后", () => {
+  it("任务进展按序追加到原回复，用户插话和助手答复保持独立", () => {
     const confirmed = confirm();
     const dispatching = prepared(confirmed);
     const acknowledged = reducer(dispatching, {
@@ -363,15 +389,167 @@ describe("对话只保留执行关键节点", () => {
         .slice(confirmed.messages.length)
         .map((message) => message.text),
     ).toEqual([
-      expect.stringContaining("已接收任务"),
       "查看设备 A 状态",
       expect.stringContaining("当前任务为A 区巡检中"),
-      expect.stringContaining("巡检已暂停"),
-      expect.stringContaining("巡检已继续"),
-      expect.stringContaining("A 区巡检完成"),
       "查看设备 A 状态",
       expect.stringContaining("当前任务为空闲"),
     ]);
+    expect(
+      taskUpdates(queriedAfterCompletion).map((update) => update.text),
+    ).toEqual([
+      expect.stringContaining("已接收任务"),
+      expect.stringContaining("巡检已暂停"),
+      expect.stringContaining("巡检已继续"),
+      expect.stringContaining("A 区巡检完成"),
+    ]);
+    expect(taskMessage(queriedAfterCompletion).simulatedDurationMs).toBe(
+      taskMessage(confirmed).simulatedDurationMs,
+    );
+    expect(
+      queriedAfterCompletion.messages.filter(
+        (message) => message.taskId === confirmed.plan!.id,
+      ),
+    ).toHaveLength(1);
+    expect(taskMessage(queriedAfterCompletion).refs).toBeUndefined();
+    for (const update of taskUpdates(queriedAfterCompletion)) {
+      expect(update).not.toHaveProperty("refs");
+      expect(update).not.toHaveProperty("simulatedDurationMs");
+    }
+  });
+  it("独立澄清与对象查询不会被合并进任务进展，后续完成仍更新原回复", () => {
+    const before = running();
+    const unclear = reducer(before, { type: "SEND", text: "它怎么样？" });
+    expect(unclear.messages.at(-1)?.text).toContain("请告诉我想查看的设备");
+    expect(unclear.messages.at(-1)?.taskId).toBeUndefined();
+    expect(taskUpdates(unclear)).toEqual(taskUpdates(before));
+    const answered = reducer(
+      reducer(unclear, { type: "ADD_CONTEXT", id: "C" }),
+      { type: "SEND", text: "查看状态" },
+    );
+    expect(answered.messages.at(-2)?.refs).toEqual(["C"]);
+    expect(answered.messages.at(-1)).toMatchObject({
+      role: "agent",
+      refs: ["C"],
+      text: expect.stringContaining("时效未知"),
+    });
+    expect(taskUpdates(answered)).toEqual(taskUpdates(before));
+    const completed = reducer(answered, {
+      type: "PROGRESS",
+      session: answered.session,
+      progress: 100,
+    });
+    expectTaskCardRetained(answered, completed);
+    expect(completed.messages.slice(before.messages.length)).toEqual(
+      answered.messages.slice(before.messages.length),
+    );
+    expect(taskUpdates(completed).at(-1)?.kind).toBe("result");
+  });
+  it("重复准备回执、重试、执行回执和完成不会刷重复进展", () => {
+    const confirmed = confirm();
+    const failed = prepared(confirmed, false);
+    expect(prepared(failed, false)).toEqual(failed);
+    const retrying = reducer(failed, { type: "RETRY", now: NOW });
+    expect(reducer(retrying, { type: "RETRY", now: NOW })).toEqual(retrying);
+    const ready = prepared(retrying);
+    expect(prepared(ready)).toEqual(ready);
+    const ack = {
+      type: "ACK" as const,
+      session: ready.session,
+      revision: ready.plan!.revision,
+    };
+    const acknowledged = reducer(ready, ack);
+    expect(reducer(acknowledged, ack)).toEqual(acknowledged);
+    let advancing = acknowledged;
+    for (const progress of [12, 25, 48, 48]) {
+      advancing = reducer(advancing, {
+        type: "PROGRESS",
+        session: advancing.session,
+        progress,
+      });
+      expect(advancing.messages).toEqual(acknowledged.messages);
+    }
+    const completion = {
+      type: "PROGRESS" as const,
+      session: advancing.session,
+      progress: 100,
+    };
+    const completed = reducer(advancing, completion);
+    expect(reducer(completed, completion)).toEqual(completed);
+    expect(completed.messages).toHaveLength(confirmed.messages.length);
+    expect(taskUpdates(completed).map((update) => update.kind)).toEqual([
+      "failure",
+      "progress",
+      "progress",
+      "progress",
+      "result",
+    ]);
+    expect(taskUpdates(completed).map((update) => update.id)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(taskMessage(completed).simulatedDurationMs).toBe(
+      taskMessage(confirmed).simulatedDurationMs,
+    );
+  });
+  it("等待预约与到时执行继续使用同一任务回复", () => {
+    const plan = reducer(filtered(), {
+      type: "UPDATE_PLAN",
+      start: { kind: "scheduled", at: NOW + 60000 },
+      order: "forward",
+    });
+    const confirmed = confirm(plan);
+    const scheduled = prepared(confirmed);
+    expectTaskCardRetained(confirmed, scheduled);
+    expect(taskUpdates(scheduled).at(-1)?.text).toContain("等待预约时间");
+    const waiting = reducer(scheduled, { type: "TICK", now: NOW + 30000 });
+    expect(waiting.messages).toEqual(scheduled.messages);
+    const due = reducer(waiting, { type: "TICK", now: NOW + 60000 });
+    const acknowledged = reducer(due, {
+      type: "ACK",
+      session: due.session,
+      revision: due.plan!.revision,
+    });
+    expectTaskCardRetained(confirmed, acknowledged);
+    expect(acknowledged.messages).toHaveLength(confirmed.messages.length);
+    expect(taskUpdates(acknowledged).map((update) => update.text)).toEqual([
+      expect.stringContaining("等待预约时间"),
+      expect.stringContaining("已接收任务"),
+    ]);
+  });
+  it("重置后的新任务不继承上一任务进展，迟到回执不污染新回复", () => {
+    const old = reducer(running(), { type: "PAUSE" });
+    const reset = reducer(old, { type: "RESET", now: NOW });
+    const plan = reducer(
+      reducer(reset, { type: "FILTER", criteriaConfirmed: true }),
+      { type: "UPDATE_PLAN", start: { kind: "immediate" }, order: "reverse" },
+    );
+    const fresh = prepared(confirm(plan));
+    expect(taskUpdates(fresh)).toEqual([]);
+    expect(
+      reducer(fresh, {
+        type: "ACK",
+        session: old.session,
+        revision: old.plan!.revision,
+      }),
+    ).toEqual(fresh);
+    const acknowledged = reducer(fresh, {
+      type: "ACK",
+      session: fresh.session,
+      revision: fresh.plan!.revision,
+    });
+    expect(taskUpdates(acknowledged)).toHaveLength(1);
+    expect(
+      reducer(acknowledged, {
+        type: "PROGRESS",
+        session: old.session,
+        progress: 100,
+      }),
+    ).toEqual(acknowledged);
+    expect(
+      taskUpdates(acknowledged).some((update) => /暂停|完成/.test(update.text)),
+    ).toBe(false);
+    expect(
+      acknowledged.messages.filter((message) => message.taskId),
+    ).toHaveLength(1);
   });
 });
 
@@ -412,7 +590,7 @@ describe("对话内计划与历史边界", () => {
     expect(next.activeTaskMessageId).not.toBe(s.activeTaskMessageId);
     expect(next.messages.at(-2)?.role).toBe("user");
     const failed = prepared(next, false);
-    expect(failed.messages.at(-1)?.kind).toBe("failure");
+    expect(taskUpdates(failed).at(-1)?.kind).toBe("failure");
     expectTaskCardRetained(next, failed);
     const changed = reducer(failed, {
       type: "UPDATE_PLAN",
@@ -426,7 +604,7 @@ describe("对话内计划与历史边界", () => {
     expect(changed.plan?.order).toBe("forward");
     expect(changed.activeTaskMessageId).toBe(failed.activeTaskMessageId);
   });
-  it("预约失效后再次确认新增一张执行卡，旧计划快照保持不变", () => {
+  it("预约失效后澄清并再次确认，沿用任务回复且保留原始计划快照", () => {
     const original = reducer(filtered(), {
       type: "UPDATE_PLAN",
       start: { kind: "scheduled", at: NOW + 60000 },
@@ -442,21 +620,35 @@ describe("对话内计划与历史边界", () => {
     );
     expectTaskCardRetained(firstConfirmation, expired);
     expect(expired.phase).toBe("clarify");
-    const updated = reducer(expired, {
+    expect(taskUpdates(expired).at(-1)).toMatchObject({
+      kind: "question",
+      text: expect.stringContaining("请重新选择开始时间并确认"),
+    });
+    const answered = reducer(expired, { type: "SEND", text: "现在开始" });
+    expect(answered.messages.at(-2)?.text).toBe("现在开始");
+    expect(answered.messages.at(-1)?.text).toContain("请核对地图与任务卡后确认");
+    expect(taskUpdates(answered)).toEqual(taskUpdates(expired));
+    expect(answered.confirmedRevision).toBeNull();
+    expect(answered.dispatchCount).toBe(0);
+    const updated = reducer(answered, {
       type: "UPDATE_PLAN",
       start: { kind: "immediate" },
       order: "reverse",
     });
     expectTaskCardRetained(expired, updated);
     const reconfirmed = confirm(updated);
-    expect(reconfirmed.messages.length).toBe(updated.messages.length + 2);
-    expect(reconfirmed.messages.at(-2)?.role).toBe("user");
+    expect(reconfirmed.messages.length).toBe(updated.messages.length + 1);
+    expect(reconfirmed.messages.at(-1)?.role).toBe("user");
     expect(reconfirmed.activeTaskMessageId).toBe(
-      reconfirmed.messages.at(-1)?.id,
-    );
-    expect(reconfirmed.activeTaskMessageId).not.toBe(
       firstConfirmation.activeTaskMessageId,
     );
+    expectTaskCardRetained(updated, reconfirmed);
+    expect(taskUpdates(reconfirmed).at(-1)?.text).toContain(
+      "更新后的计划已确认",
+    );
+    expect(
+      reconfirmed.messages.filter((message) => message.taskId),
+    ).toHaveLength(1);
     expect(
       reconfirmed.messages.find(
         (message) => message.id === original.activeTaskMessageId,
@@ -601,7 +793,8 @@ describe("暂停、继续与停止", () => {
       ).toEqual(stopped);
       expect(stopped.dispatchCount).toBe(1);
       expectTaskCardRetained(s, stopped);
-      expect(stopped.messages.at(-1)?.text).toContain("巡检已停止");
+      expect(taskUpdates(stopped).at(-1)?.text).toContain("巡检已停止");
+      expect(taskUpdates(stopped).at(-1)?.kind).toBe("result");
     }
   });
   it("无执行任务时控制无效，重复暂停不会追加消息", () => {
