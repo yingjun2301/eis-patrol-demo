@@ -169,6 +169,7 @@ export type Action =
   | { type: "INSPECT_DEVICES" }
   | { type: "START_PLANNING" }
   | { type: "REQUEST_PLAN_CHANGE" }
+  | { type: "RESET_PLAN" }
   | { type: "FOCUS"; id: ObjectId | null }
   | { type: "ADD_CONTEXT"; id: ObjectId }
   | { type: "REMOVE_CONTEXT"; id: ObjectId }
@@ -403,6 +404,23 @@ export function reducer(s: State, a: Action): State {
       return startPlanning(s);
     case "REQUEST_PLAN_CHANGE":
       return requestPlanChange(s);
+    case "RESET_PLAN": {
+      if (!s.plan || !editable(s)) return s;
+      return {
+        ...s,
+        plan: {
+          ...s.plan,
+          start: { kind: "immediate" },
+          startSuggested: true,
+          order: "forward",
+          revision: s.plan.revision + 1,
+        },
+        phase: "preview",
+        confirmedRevision: null,
+        preparedRevision: null,
+        error: null,
+      };
+    }
     case "INSPECT_DEVICES": {
       if (s.plan) return s;
       const n = add(

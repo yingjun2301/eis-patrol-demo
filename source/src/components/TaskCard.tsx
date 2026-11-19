@@ -31,7 +31,7 @@ export function PlanReceipt({ plan }: { plan: Plan }) {
   );
 }
 
-/** One calendar edits the shared draft; choosing now means start after confirmation. */
+/** The calendar commits a scheduled time or an explicit start-after-confirmation mode. */
 function StartTimeField({
   open,
   onOpenChange,
@@ -53,8 +53,39 @@ function StartTimeField({
           ),
     [timestamp],
   );
+  // Replace the picker shortcut itself: do not translate a timestamp into a mode.
+  const components = useMemo(
+    () => ({
+      nowButton: function ImmediateStartButton({
+        className,
+      }: {
+        className?: string;
+      }) {
+        return (
+          <Button
+            type="link"
+            size="small"
+            className={className}
+            onClick={() => {
+              dispatch({ type: "UPDATE_START", start: { kind: "immediate" } });
+              onOpenChange(false);
+            }}
+          >
+            确认后立即开始
+          </Button>
+        );
+      },
+    }),
+    [dispatch, onOpenChange],
+  );
   return (
     <DatePicker
+      key={state.plan?.revision}
+      components={components}
+      popupAlign={{
+        offset: [0, 0],
+        overflow: { adjustX: true, adjustY: true, shiftY: true },
+      }}
       className="plan-time-picker"
       aria-label="修改开始时间"
       placeholder="确认后立即开始"
@@ -70,18 +101,8 @@ function StartTimeField({
         const at = dayjs
           .tz(value.format("YYYY-MM-DD HH:mm"), "Asia/Shanghai")
           .valueOf();
-        const currentMinute = dayjs(now)
-          .tz("Asia/Shanghai")
-          .format("YYYY-MM-DD HH:mm");
-        // Ant Design's native “此刻” shortcut uses the browser's current clock.
-        const immediate =
-          value.isSame(dayjs(), "minute") ||
-          value.format("YYYY-MM-DD HH:mm") === currentMinute;
-        if (!immediate && at <= now) return;
-        dispatch({
-          type: "UPDATE_START",
-          start: immediate ? { kind: "immediate" } : { kind: "scheduled", at },
-        });
+        if (at <= now) return;
+        dispatch({ type: "UPDATE_START", start: { kind: "scheduled", at } });
         onOpenChange(false);
       }}
       needConfirm
@@ -102,7 +123,7 @@ function StartTimeField({
             Array.from({ length: current.hour() }, (_, i) => i),
           disabledMinutes: (hour) =>
             hour === current.hour()
-              ? Array.from({ length: current.minute() }, (_, i) => i)
+              ? Array.from({ length: current.minute() + 1 }, (_, i) => i)
               : [],
         };
       }}
@@ -110,13 +131,7 @@ function StartTimeField({
   );
 }
 
-export default function TaskCard({
-  onAdvance,
-  onModify,
-}: {
-  onAdvance: () => void;
-  onModify: () => void;
-}) {
+export default function TaskCard({ onAdvance }: { onAdvance: () => void }) {
   const { state, dispatch } = usePatrol();
   const [pickerOpen, setPickerOpen] = useState(false);
   const editable = ["preview", "clarify"].includes(state.phase);
@@ -317,7 +332,14 @@ export default function TaskCard({
             </Button>
           ) : (
             <>
-              <Button onClick={onModify}>修改计划</Button>
+              <Button
+                onClick={() => {
+                  setPickerOpen(false);
+                  dispatch({ type: "RESET_PLAN" });
+                }}
+              >
+                重置
+              </Button>
               <Button
                 type="primary"
                 disabled={timeInvalid || pickerOpen}

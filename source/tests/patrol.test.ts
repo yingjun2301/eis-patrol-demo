@@ -157,6 +157,108 @@ describe("从计划卡衔接对话修改", () => {
     }
   });
 });
+describe("重置当前计划", () => {
+  it("预约逆向恢复立即开始与顺向路线，保留对象、原卡和对话上下文", () => {
+    const scheduled = reducer(filtered(), {
+      type: "UPDATE_PLAN",
+      start: { kind: "scheduled", at: NOW + 60000 },
+      order: "reverse",
+    });
+    const referenced = reducer(scheduled, { type: "ADD_CONTEXT", id: "B" });
+    const invalid = reducer(referenced, {
+      type: "UPDATE_START",
+      start: { kind: "scheduled", at: NOW - 1 },
+    });
+    expect(invalid.error).not.toBeNull();
+    const reset = reducer(invalid, { type: "RESET_PLAN" });
+    expect(reset.plan).toMatchObject({
+      id: scheduled.plan!.id,
+      deviceId: scheduled.plan!.deviceId,
+      regionId: scheduled.plan!.regionId,
+      start: { kind: "immediate" },
+      order: "forward",
+      revision: scheduled.plan!.revision + 1,
+    });
+    expect(routePoints(reset.plan!.order)).toEqual(routePoints("forward"));
+    expect(routePoints(reset.plan!.order)).not.toEqual(routePoints(scheduled.plan!.order));
+    expect(reset.activeTaskMessageId).toBe(invalid.activeTaskMessageId);
+    expect(reset.messages).toBe(invalid.messages);
+    expect(reset.context).toBe(invalid.context);
+    expect(reset.devices).toBe(invalid.devices);
+    expect(reset.session).toBe(invalid.session);
+    expect(reset.error).toBeNull();
+    expect(reset.confirmedRevision).toBeNull();
+    expect(reset.preparedRevision).toBeNull();
+    expect(reset.phase).toBe("preview");
+    expect(reset.dispatchCount).toBe(0);
+  });
+  it("重置后的立即开始不绑定过期时刻，等待几分钟仍需确认才能执行", () => {
+    const scheduled = reducer(filtered(), {
+      type: "UPDATE_PLAN",
+      start: { kind: "scheduled", at: NOW + 60000 },
+      order: "reverse",
+    });
+    const reset = reducer(scheduled, { type: "RESET_PLAN" });
+    const later = reducer(reset, { type: "TICK", now: NOW + 300000 });
+    expect(later.plan?.start).toEqual({ kind: "immediate" });
+    expect(later.phase).toBe("preview");
+    expect(later.dispatchCount).toBe(0);
+    const confirmed = confirm(later);
+    expect(confirmed.phase).toBe("preparing");
+    expect(confirmed.error).toBeNull();
+    const dispatched = prepared(confirmed);
+    expect(dispatched.phase).toBe("dispatching");
+    expect(dispatched.dispatchCount).toBe(1);
+  });
+  it("默认计划也创建新版本以清除未提交的选择，执行期间与没有计划时不能重置", () => {
+    const draft = filtered();
+    const reset = reducer(draft, { type: "RESET_PLAN" });
+    expect(reset.plan?.start).toEqual(draft.plan?.start);
+    expect(reset.plan?.order).toBe(draft.plan?.order);
+    expect(reset.plan?.revision).toBe(draft.plan!.revision + 1);
+    expect(reset.messages).toBe(draft.messages);
+    expect(reset.activeTaskMessageId).toBe(draft.activeTaskMessageId);
+    const pending = confirm();
+    const scheduled = prepared(confirm(reducer(filtered(), {
+      type: "UPDATE_START",
+      start: { kind: "scheduled", at: NOW + 60000 },
+    })));
+    for (const state of [initialState(NOW), pending, scheduled, running()]) {
+      expect(reducer(state, { type: "RESET_PLAN" })).toBe(state);
+    }
+  });
+  it("选择此刻保存立即开始语义，五分钟后确认仍有效", () => {
+    const scheduled = reducer(filtered(), {
+      type: "UPDATE_START",
+      start: { kind: "scheduled", at: NOW + 60000 },
+    });
+    const immediate = reducer(scheduled, {
+      type: "UPDATE_START", start: { kind: "immediate" },
+    });
+    const later = reducer(immediate, { type: "TICK", now: NOW + 300000 });
+    expect(later.plan?.start).toEqual({ kind: "immediate" });
+    expect(later.dispatchCount).toBe(0);
+    const confirmed = confirm(later);
+    expect(confirmed.phase).toBe("preparing");
+    expect(confirmed.error).toBeNull();
+    expect(prepared(confirmed).dispatchCount).toBe(1);
+  });
+  it("重置后旧版本确认、准备结果和下发回执均不能推进新计划", () => {
+    const changed = reducer(filtered(), { type: "UPDATE_ORDER", order: "reverse" });
+    const reset = reducer(changed, { type: "RESET_PLAN" });
+    expect(reducer(reset, {
+      type: "CONFIRM", revision: changed.plan!.revision, now: NOW,
+    })).toBe(reset);
+    const confirmed = confirm(reset);
+    expect(reducer(confirmed, {
+      type: "PREPARED", revision: changed.plan!.revision, session: confirmed.session, ok: true,
+    })).toBe(confirmed);
+    const dispatched = prepared(confirmed);
+    expect(reducer(dispatched, {
+      type: "ACK", revision: changed.plan!.revision, session: dispatched.session,
+    })).toBe(dispatched);
+  });
+});
 describe("澄清、版本和下发边界", () => {
   it("筛选后直接预览建议时间和路线，等待不等于接受或下发", () => {
     const draft = filtered();

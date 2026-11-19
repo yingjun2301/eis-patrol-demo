@@ -64,13 +64,6 @@ export default function Conversation({
     dispatch({ type: "SEND", text: input });
     setInput("");
   }
-  function modifyPlan() {
-    advance();
-    dispatch({ type: "REQUEST_PLAN_CHANGE" });
-    requestAnimationFrame(() =>
-      inputRef.current?.focus({ preventScroll: true }),
-    );
-  }
   function feedbackReady(m: Message) {
     if (m.role !== "agent") return false;
     if (!m.taskId && m.taskUpdates === undefined) return true;
@@ -267,7 +260,7 @@ export default function Conversation({
                     </div>
                   )}
                 {m.id === state.activeTaskMessageId ? (
-                  <TaskCard onAdvance={advance} onModify={modifyPlan} />
+                  <TaskCard onAdvance={advance} />
                 ) : m.planReceipt ? (
                   <PlanReceipt plan={m.planReceipt} />
                 ) : null}
