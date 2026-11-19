@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { App, Button, Dropdown, Tooltip } from "antd";
+import { App, Button, Tooltip } from "antd";
 import {
   CopyOutlined,
   DislikeOutlined,
@@ -68,18 +68,12 @@ export default function MessageFeedback({
           onClick={() => setVote(vote === "dislike" ? null : "dislike")}
         />
       </Tooltip>
-      <Dropdown
-        trigger={["click"]}
-        arrow={false}
-        menu={{ items: [{ key: "copy", label: "复制文本", onClick: copy }] }}
-      >
-        <Button
-          type="text"
-          size="small"
-          aria-label="更多回复操作"
-          icon={<EllipsisOutlined />}
-        />
-      </Dropdown>
+      <Button
+        type="text"
+        size="small"
+        aria-label="更多回复操作"
+        icon={<EllipsisOutlined />}
+      />
       <time dateTime={new Date(at).toISOString()} title="回复完成时间">
         {completionTime.format(at)}
       </time>

@@ -66,6 +66,12 @@ export default function Conversation({
   }
   function feedbackReady(m: Message) {
     if (m.role !== "agent") return false;
+    if (m.kind === "setup" && !state.plan) return false;
+    if (
+      m.id === state.activeTaskMessageId &&
+      ["preview", "clarify"].includes(state.phase)
+    )
+      return false;
     if (!m.taskId && m.taskUpdates === undefined) return true;
     return (
       m.taskUpdates?.at(-1)?.kind === "result" &&
@@ -242,7 +248,7 @@ export default function Conversation({
                           }
                         }}
                       >
-                        {preset ? "检查可用设备" : "查看设备状态"}
+                        生成巡检计划
                       </Button>
                     </div>
                   ) : (

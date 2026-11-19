@@ -815,33 +815,44 @@ small,
   align-items: center;
   gap: 4px 8px;
 }
-.plan-time-picker.ant-picker {
-  width: 100%;
+.plan-time-picker.ant-picker,
+.plan-order-select.ant-select {
+  width: calc(100% + 16px);
   min-width: 0;
-  height: 28px;
-  padding: 2px 0;
+  height: 32px;
+  margin-inline: -8px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--font-body);
+  transition: background-color 150ms ease;
+}
+.plan-time-picker.ant-picker:hover,
+.plan-order-select.ant-select:hover {
+  background: var(--bg-input);
 }
 .plan-time-picker .ant-picker-input > input {
-  font-size: 14px;
+  font-size: var(--font-body);
   cursor: pointer;
 }
 .plan-time-picker .ant-picker-input > input::placeholder {
-  color: var(--text-primary);
+  color: var(--text);
   opacity: 1;
-}
-.plan-time-picker .ant-picker-suffix {
-  margin-inline-end: 4px;
-  color: var(--text-secondary);
-}
-.plan-order-select.ant-select {
-  width: 126px;
-  height: 28px;
-  border-width: 0;
-  padding-inline: 0;
-  font-size: 14px;
 }
 .plan-order-select.ant-select .ant-select-content {
   padding-inline-start: 0;
+}
+.plan-time-picker .ant-picker-suffix,
+.plan-order-select .ant-select-suffix {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  margin-inline: 8px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 .plan-details > div {
   align-items: center;
