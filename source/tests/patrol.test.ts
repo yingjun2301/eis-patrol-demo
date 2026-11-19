@@ -101,9 +101,156 @@ describe("筛选与上下文", () => {
   });
 });
 describe("澄清、版本和下发边界", () => {
-  it("时间未明确时确认无效", () => {
-    const s = filtered(),
-      n = reducer(s, { type: "CONFIRM", revision: 1, now: NOW });
+  it("筛选后直接预览建议时间和路线，等待不等于接受或下发", () => {
+    const draft = filtered();
+    expect(draft.phase).toBe("preview");
+    expect(draft.plan).toMatchObject({
+      start: { kind: "immediate" },
+      startSuggested: true,
+      order: "forward",
+    });
+    expect(draft.confirmedRevision).toBeNull();
+    expect(draft.preparedRevision).toBeNull();
+    const later = reducer(draft, { type: "TICK", now: NOW + 60000 });
+    expect(later.phase).toBe("preview");
+    expect(later.dispatchCount).toBe(0);
+    expect(later.plan).toEqual(draft.plan);
+    expect(prepared(later)).toEqual(later);
+  });
+  it("一次确认接受建议时间并开始准备，成功准备后才下发", () => {
+    const draft = filtered();
+    const confirmed = confirm(draft);
+    expect(confirmed.phase).toBe("preparing");
+    expect(confirmed.plan?.start).toEqual({ kind: "immediate" });
+    expect(confirmed.plan?.startSuggested).toBe(false);
+    expect(confirmed.confirmedRevision).toBe(draft.plan!.revision);
+    expect(confirmed.dispatchCount).toBe(0);
+    expect(
+      confirmed.messages.find((m) => m.id === draft.activeTaskMessageId)
+        ?.planReceipt?.startSuggested,
+    ).toBe(false);
+    expect(draft.plan?.startSuggested).toBe(true);
+    expect(prepared(confirmed).dispatchCount).toBe(1);
+  });
+  it("单独调整顺序即时更新空间数据，保留建议时间且不新增消息", () => {
+    const draft = filtered();
+    const reversed = reducer(draft, { type: "UPDATE_ORDER", order: "reverse" });
+    expect(reversed.plan?.order).toBe("reverse");
+    expect(reversed.plan?.start).toEqual(draft.plan?.start);
+    expect(reversed.plan?.startSuggested).toBe(true);
+    expect(reversed.plan?.revision).toBe(draft.plan!.revision + 1);
+    expect(reversed.messages).toEqual(draft.messages);
+    expect(reversed.activeTaskMessageId).toBe(draft.activeTaskMessageId);
+    expect(routePoints(reversed.plan!.order)).not.toEqual(
+      routePoints(draft.plan!.order),
+    );
+    expect(patrolPoints(reversed.plan!.order)[0]).toEqual(
+      patrolPoints(draft.plan!.order).at(-1),
+    );
+    expect(reversed.confirmedRevision).toBeNull();
+    expect(reversed.dispatchCount).toBe(0);
+  });
+  it("时间与顺序分项修改互不覆盖，最后确认只接受最新组合", () => {
+    const draft = filtered();
+    const reverse = reducer(draft, { type: "UPDATE_ORDER", order: "reverse" });
+    const time = { kind: "scheduled" as const, at: NOW + 60000 };
+    const scheduled = reducer(reverse, { type: "UPDATE_START", start: time });
+    expect(scheduled.plan?.order).toBe("reverse");
+    expect(scheduled.plan?.start).toEqual(time);
+    expect(scheduled.plan?.startSuggested).toBe(false);
+    const forward = reducer(scheduled, {
+      type: "UPDATE_ORDER",
+      order: "forward",
+    });
+    expect(forward.plan?.start).toEqual(time);
+    expect(forward.plan?.startSuggested).toBe(false);
+    expect(forward.plan?.revision).toBe(draft.plan!.revision + 3);
+    expect(forward.messages).toEqual(draft.messages);
+    expect(forward.confirmedRevision).toBeNull();
+    expect(forward.preparedRevision).toBeNull();
+    expect(forward.dispatchCount).toBe(0);
+    expect(confirm(reverse).plan?.order).toBe("reverse");
+    expect(
+      reducer(forward, {
+        type: "CONFIRM",
+        revision: reverse.plan!.revision,
+        now: NOW,
+      }),
+    ).toEqual(forward);
+    const accepted = prepared(confirm(forward));
+    expect(accepted.phase).toBe("scheduled");
+    expect(accepted.plan).toMatchObject({ start: time, order: "forward" });
+    expect(accepted.dispatchCount).toBe(0);
+    const immediate = reducer(forward, {
+      type: "UPDATE_START",
+      start: { kind: "immediate" },
+    });
+    expect(immediate.plan?.order).toBe("forward");
+    expect(immediate.plan?.startSuggested).toBe(false);
+  });
+  it("无效预约不会覆盖原草稿，确认后的任务不再接受分项编辑", () => {
+    const draft = filtered();
+    for (const at of [NOW - 1, Number.NaN]) {
+      const invalid = reducer(draft, {
+        type: "UPDATE_START",
+        start: { kind: "scheduled", at },
+      });
+      expect(invalid.plan).toEqual(draft.plan);
+      expect(invalid.messages).toEqual(draft.messages);
+      expect(invalid.error).toContain("晚于当前时间");
+      expect(invalid.dispatchCount).toBe(0);
+    }
+    for (const state of [initialState(NOW), confirm(draft), running()]) {
+      expect(
+        reducer(state, { type: "UPDATE_ORDER", order: "reverse" }),
+      ).toEqual(state);
+      expect(
+        reducer(state, {
+          type: "UPDATE_START",
+          start: { kind: "scheduled", at: NOW + 60000 },
+        }),
+      ).toEqual(state);
+    }
+  });
+  it("预约时间过期仍能独立预览顺序，但修正时间前不能确认", () => {
+    const scheduled = reducer(filtered(), {
+      type: "UPDATE_START",
+      start: { kind: "scheduled", at: NOW + 60000 },
+    });
+    const expired = reducer(scheduled, { type: "TICK", now: NOW + 61000 });
+    const changed = reducer(expired, {
+      type: "UPDATE_ORDER",
+      order: "reverse",
+    });
+    expect(changed.plan?.order).toBe("reverse");
+    expect(changed.plan?.start).toEqual(scheduled.plan?.start);
+    const rejected = confirm(changed);
+    expect(rejected.phase).toBe("preview");
+    expect(rejected.error).toContain("已过");
+    expect(rejected.dispatchCount).toBe(0);
+    const corrected = reducer(rejected, {
+      type: "UPDATE_START",
+      start: { kind: "immediate" },
+    });
+    expect(corrected.plan?.order).toBe("reverse");
+    expect(prepared(confirm(corrected)).dispatchCount).toBe(1);
+  });
+  it("对话仅修改顺序不冒充时间选择，明确时间后取消建议标记", () => {
+    const reverse = reducer(filtered(), { type: "SEND", text: "改为逆向巡检" });
+    expect(reverse.plan?.order).toBe("reverse");
+    expect(reverse.plan?.startSuggested).toBe(true);
+    const time = reducer(reverse, { type: "SEND", text: "明天 09:30 开始" });
+    expect(time.plan?.order).toBe("reverse");
+    expect(time.plan?.startSuggested).toBe(false);
+    expect(time.dispatchCount).toBe(0);
+  });
+  it("缺少开始时间时确认无效", () => {
+    const s = reducer(filtered(), {
+        type: "UPDATE_PLAN",
+        start: null,
+        order: "forward",
+      }),
+      n = reducer(s, { type: "CONFIRM", revision: s.plan!.revision, now: NOW });
     expect(n.phase).toBe("clarify");
     expect(n.dispatchCount).toBe(0);
   });
@@ -568,7 +715,7 @@ describe("对话内计划与历史边界", () => {
     expect(chosen.plan?.regionId).toBe("zone-a");
     expect(chosen.activeTaskMessageId).toBe(chosen.messages.at(-1)?.id);
   });
-  it("卡片保存原位更新，不增加消息或下发", () => {
+  it("卡片修改原位更新，不增加消息或下发", () => {
     const s = filtered();
     const next = reducer(s, {
       type: "UPDATE_PLAN",
@@ -626,7 +773,9 @@ describe("对话内计划与历史边界", () => {
     });
     const answered = reducer(expired, { type: "SEND", text: "现在开始" });
     expect(answered.messages.at(-2)?.text).toBe("现在开始");
-    expect(answered.messages.at(-1)?.text).toContain("请核对地图与任务卡后确认");
+    expect(answered.messages.at(-1)?.text).toContain(
+      "请核对地图与任务卡后确认",
+    );
     expect(taskUpdates(answered)).toEqual(taskUpdates(expired));
     expect(answered.confirmedRevision).toBeNull();
     expect(answered.dispatchCount).toBe(0);
@@ -689,7 +838,7 @@ describe("明确筛选条件来源", () => {
       type: "SEND",
       text: originalRequest,
     });
-    expect(s.phase).toBe("clarify");
+    expect(s.phase).toBe("preview");
     expect(s.messages[0].text).toBe(originalRequest);
     expect(s.dispatchCount).toBe(0);
   });
@@ -719,14 +868,14 @@ describe("明确筛选条件来源", () => {
     );
     expect(s.messages.at(-1)?.text).not.toContain("未超过");
   });
-  it("查看设备后可明确输入条件，保留真实输入并继续时间澄清", () => {
+  it("查看设备后可明确输入条件，保留真实输入并预览建议时间", () => {
     const inspected = reducer(initialState(NOW), { type: "INSPECT_DEVICES" });
     const s = reducer(inspected, {
       type: "SEND",
       text: "选择在线且电量超过50%的设备",
     });
     expect(s.plan?.regionId).toBe("zone-a");
-    expect(s.phase).toBe("clarify");
+    expect(s.phase).toBe("preview");
     expect(s.messages.at(-2)?.text).toBe("选择在线且电量超过50%的设备");
     expect(s.dispatchCount).toBe(0);
     const reset = reducer(s, { type: "RESET", now: NOW });

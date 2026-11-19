@@ -113,6 +113,7 @@ export type Plan = {
   regionId: "zone-a";
   order: RouteOrder;
   start: StartTime | null;
+  startSuggested?: boolean;
 };
 export type State = {
   devices: Device[];
@@ -171,6 +172,8 @@ export type Action =
   | { type: "ADD_CONTEXT"; id: ObjectId }
   | { type: "REMOVE_CONTEXT"; id: ObjectId }
   | { type: "UPDATE_PLAN"; start: StartTime | null; order: RouteOrder }
+  | { type: "UPDATE_START"; start: StartTime }
+  | { type: "UPDATE_ORDER"; order: RouteOrder }
   | { type: "CONFIRM"; revision: number; now: number }
   | { type: "PREPARED"; session: number; revision: number; ok: boolean }
   | { type: "RETRY"; now: number }
@@ -268,14 +271,15 @@ function begin(s: State, text = originalRequest): State {
     planningRegion: "zone-a",
     focused: null,
     focusNonce: n.focusNonce + 1,
-    phase: "clarify",
+    phase: "preview",
     plan: {
       id: "PT-001",
       revision: 1,
       deviceId: "A",
       regionId: "zone-a",
       order: "forward",
-      start: null,
+      start: { kind: "immediate" },
+      startSuggested: true,
     },
   };
   return taskReply(n, "仅设备 A 符合条件；B 未达电量要求，C 离线。", {
@@ -288,13 +292,25 @@ function updatePlan(
   start: StartTime | null,
   order: RouteOrder,
   fromConversation = false,
+  startSuggested = false,
+  validateStart = true,
 ): State {
   if (!s.plan || !editable(s)) return s;
-  if (start?.kind === "scheduled" && start.at <= s.now)
+  if (
+    validateStart &&
+    start?.kind === "scheduled" &&
+    (!Number.isFinite(start.at) || start.at <= s.now)
+  )
     return { ...s, error: "请选择晚于当前时间的开始时间。" };
   const n = {
     ...s,
-    plan: { ...s.plan, start, order, revision: s.plan.revision + 1 },
+    plan: {
+      ...s.plan,
+      start,
+      startSuggested,
+      order,
+      revision: s.plan.revision + 1,
+    },
     focused: null,
     phase: (start ? "preview" : "clarify") as Phase,
     confirmedRevision: null,
@@ -398,6 +414,19 @@ export function reducer(s: State, a: Action): State {
         : s;
     case "UPDATE_PLAN":
       return updatePlan(s, a.start, a.order);
+    case "UPDATE_START":
+      return s.plan ? updatePlan(s, a.start, s.plan.order) : s;
+    case "UPDATE_ORDER":
+      return s.plan
+        ? updatePlan(
+            s,
+            s.plan.start,
+            a.order,
+            false,
+            s.plan.startSuggested,
+            false,
+          )
+        : s;
     case "SEND": {
       const text = a.text.trim();
       if (!text) return s;
@@ -420,7 +449,7 @@ export function reducer(s: State, a: Action): State {
         return add(
           n,
           "agent",
-          "请在当前任务卡中核对设备、区域、开始时间和路线，然后点击“确认计划”。",
+          "请在当前任务卡中核对设备、区域、开始时间和路线，然后点击卡片底部的确认按钮。",
         );
       const time = parseStart(text, s.now);
       if (time && editable(s)) return updatePlan(n, time, s.plan!.order, true);
@@ -430,6 +459,8 @@ export function reducer(s: State, a: Action): State {
           s.plan!.start,
           /逆向|反向/.test(text) ? "reverse" : "forward",
           true,
+          s.plan!.startSuggested,
+          false,
         );
       const refs = s.context.length
         ? s.context
@@ -485,16 +516,18 @@ export function reducer(s: State, a: Action): State {
           m.taskId === s.plan!.id &&
           m.taskUpdates !== undefined,
       );
+      const confirmedPlan = { ...s.plan, startSuggested: false };
       const n = add(
         {
           ...s,
           now,
+          plan: confirmedPlan,
           confirmedRevision: a.revision,
           error: null,
           activeTaskMessageId: continuingTask ? s.activeTaskMessageId : null,
           messages: s.messages.map((message) =>
             !continuingTask && message.id === s.activeTaskMessageId
-              ? { ...message, planReceipt: { ...s.plan! } }
+              ? { ...message, planReceipt: confirmedPlan }
               : message,
           ),
         },
@@ -552,7 +585,12 @@ export function reducer(s: State, a: Action): State {
             {
               ...n,
               phase: "clarify",
-              plan: { ...s.plan, start: null, revision: s.plan.revision + 1 },
+              plan: {
+                ...s.plan,
+                start: null,
+                startSuggested: false,
+                revision: s.plan.revision + 1,
+              },
               preparedRevision: null,
               confirmedRevision: null,
             },

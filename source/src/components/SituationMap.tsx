@@ -240,7 +240,7 @@ export default function SituationMap({
   const points = routePoints(state.plan?.order || "forward");
   const waypoints = patrolPoints(state.plan?.order || "forward");
   const movement = routePosition(points, state.progress);
-  const hasRoute = !!state.plan?.start;
+  const hasRoute = !!state.plan;
   const activeMotion = ["running", "paused", "stopped", "completed"].includes(
     state.phase,
   );
@@ -260,9 +260,10 @@ export default function SituationMap({
     setView({ x: 490, y: 420, zoom: 1.08 });
   }, [state.session]);
   useEffect(() => {
-    // A new or edited plan must be fully visible, even after inspecting another device.
+    // Reveal the route when it is created or reordered. Time-only edits preserve
+    // the user's viewport, including when a new start time still needs choosing.
     if (state.plan) setView({ x: 490, y: 420, zoom: 1.2 });
-  }, [state.plan?.revision]);
+  }, [state.plan?.id, state.plan?.order]);
   const changeZoom = (delta: number) =>
     setView((v) => ({
       ...v,
